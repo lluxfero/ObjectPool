@@ -17,6 +17,9 @@ Console.WriteLine($"Pool count: {pool.Count}");
 TestObject o4 = pool.GetObject();
 Console.WriteLine($"o4: {o4}");
 
+TestObject testO = new();
+//pool.ReturnObject(ref testO); //строка, выдающая ошибку
+
 public interface IPoolable
 {
     void ResetState();
@@ -59,7 +62,8 @@ public class ObjectPool<T> where T : class, IPoolable
     private static ObjectPool<T>? _objectPool = null;
     private static object syncRoot = new();
 
-    private static ConcurrentBag<T> _pool = new ConcurrentBag<T>();
+    private static ConcurrentBag<T> _pool = new();
+    private static readonly List<T> fixingPoolElements = new();
     private static IPoolObjectCreator<T>? _objectCreator = null;
 
     public int Count { get { return _pool.Count; } }
@@ -69,7 +73,11 @@ public class ObjectPool<T> where T : class, IPoolable
             throw new ArgumentNullException("creator can't be null");
         _objectCreator = creator;
         for (int i = 0; i < count; i++)
-            _pool.Add(creator.CreateObject());
+        {
+            T obj = creator.CreateObject();
+            _pool.Add(obj);
+            fixingPoolElements.Add(obj);
+        }
     }
     public static ObjectPool<T> GetObjectPool(IPoolObjectCreator<T> creator, int count)
     {
@@ -84,12 +92,29 @@ public class ObjectPool<T> where T : class, IPoolable
         if (_pool.TryTake(out obj))
             return obj;
 
-        return _objectCreator.CreateObject();
+        obj = _objectCreator.CreateObject();
+        _pool.Add(obj);
+        fixingPoolElements.Add(obj);
+        return obj;
     }
     public void ReturnObject(ref T obj)
     {
-        obj.ResetState();
-        _pool.Add(obj);
-        obj = null;
+        bool isNotNull = false;
+        bool isPoolObject = false;
+        if (obj != null) isNotNull = true;
+        for (int i = 0; i < fixingPoolElements.Count; i++)
+            if (fixingPoolElements[i] == obj)
+            {
+                isPoolObject = true;
+                break;
+            }
+
+        if (isNotNull && isPoolObject)
+        {
+            obj.ResetState();
+            _pool.Add(obj);
+            obj = null;
+        }
+        else throw new Exception("object can't be null or can't be out of the pool");
     }
 }
